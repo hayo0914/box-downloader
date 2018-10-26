@@ -28,7 +28,7 @@ class Downloader {
       }
     }
     if (prms.length > 0) {
-      Promise.all(prms);
+      await Promise.all(prms);
     }
   }
 
