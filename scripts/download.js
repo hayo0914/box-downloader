@@ -87,9 +87,6 @@ class Downloader {
   async _downloadFile(savePath, item, downloader) {
     const { id, lock } = item;
     const modifiedAt = item.modified_at;
-    while (this._downloadingNum >= this._MAX_CONCURRENT_DOWNLOAD) {
-      await this._sleep(500);
-    }
     if (lock != null) {
       if (this._UNLOCK_FILE === true) {
         await client.files.unlock(id);
@@ -105,6 +102,9 @@ class Downloader {
     } else {
       console.log('Up To Date:', savePath);
       return;
+    }
+    while (this._downloadingNum >= this._MAX_CONCURRENT_DOWNLOAD) {
+      await this._sleep(500);
     }
     this._downloadingNum++;
     await downloader(savePath, item);
