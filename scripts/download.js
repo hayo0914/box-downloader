@@ -100,7 +100,7 @@ class Downloader {
     } else if (await this._isFileOld(savePath, modifiedAt)) {
       console.log(`File is old: ${savePath}`);
     } else {
-      console.log('Up To Date:', savePath);
+      console.log(`Up To Date: ${savePath}`);
       return;
     }
     while (this._downloadingNum >= this._MAX_CONCURRENT_DOWNLOAD) {
