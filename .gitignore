@@ -1,0 +1,4 @@
+node_modules/
+downloads/
+yarn-error.log
+config.json
