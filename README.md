@@ -16,5 +16,5 @@ It automatically does followings
 + Create a config file which is downloaded from Box App config page.
 + Run following command for downloading files
 ```sh
-$ node 
+$ node scripts/download.js <Folder Id> <Download Destination Directory>
 ```
