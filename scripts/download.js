@@ -88,7 +88,7 @@ class Downloader {
     const { id, lock } = item;
     const modifiedAt = item.modified_at;
     while (this._downloadingNum >= this._MAX_CONCURRENT_DOWNLOAD) {
-      await this._sleep(1000);
+      await this._sleep(500);
     }
     if (lock != null) {
       if (this._UNLOCK_FILE === true) {
@@ -98,20 +98,17 @@ class Downloader {
         return;
       }
     }
-    this._downloadingNum++;
     if (fs.existsSync(savePath) == false) {
       console.log(`File does not exists: ${savePath}`);
-      await downloader(savePath, item);
-      this._downloadingNum--;
     } else if (await this._isFileOld(savePath, modifiedAt)) {
       console.log(`File is old: ${savePath}`);
-      await downloader(savePath, item);
-      this._downloadingNum--;
     } else {
       console.log('Up To Date:', savePath);
-      this._downloadingNum--;
       return;
     }
+    this._downloadingNum++;
+    await downloader(savePath, item);
+    this._downloadingNum--;
   }
 
   async _isFileOld(path, modifiedAt) {
