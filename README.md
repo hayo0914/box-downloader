@@ -14,7 +14,7 @@ It automatically does followings
 
 ## How to use
 + Install node modules by `yarn install`
-+ Create a config file which is downloaded from Box App config page.
++ Create a `config.json` on root folder which is downloaded from Box App config page.
 + Run following command for downloading files
 ```sh
 $ node scripts/download.js <Folder Id> <Download Destination Directory>
