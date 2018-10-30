@@ -8,80 +8,141 @@ class Downloader {
   constructor() {
     this._MAX_CONCURRENT_DOWNLOAD = 20;
     this._client = require('./init').client;
-    this._downloadingNum = 0;
-    this._UNLOCK_FILE = false;
+    this._UNLOCK_FILE = true;
   }
 
-  async download(savePath, folderId) {
-    const items = await this._getItemList(folderId);
-    for (let item of items.entries) {
-      await this._download(savePath, item);
-    }
+  _doPararell(list, f) {
+    return new Promise((resolve, reject) => {
+      this._iter(idx => {
+          let prms = [];
+          let l = list.slice(idx * this._MAX_RECURSION_DEPTH, (1 + idx) * this._MAX_RECURSION_DEPTH - 1);
+          for (let item of l) {
+            let p = f(item);
+            if (p) {
+              prms.push(p);
+            }
+          }
+          return Promise.all(prms);
+        }, 0, Math.floor(list.length / this._MAX_CONCURRENT_DOWNLOAD),
+        () => {
+          console.log("_doPararell done");
+          resolve();
+        });
+    });
   }
 
-  async _doPararell(list, f) {
-    const prms = [];
-    for (let item of list.entries) {
-      const p = f(item);
-      if (p != null) {
-        prms.push(p);
-      }
-    }
-    if (prms.length > 0) {
-      await Promise.all(prms);
-    }
+  _doSerial(list, f) {
+    return new Promise((resolve, _) => {
+      this._iter(idx => {
+          return f(list[idx]);
+        }, 0, list.length - 1,
+        () => {
+          console.log("_doSerial done");
+          resolve();
+        }
+      );
+    });
   }
 
-  async _doSerial(list, f) {
-    for (let item of list.entries) {
-      const p = f(item);
-      if (p != null) {
-        await p;
-      }
+  _iter(next, idx, max, finish) {
+    if (idx > max) {
+       finish();
+       return;
     }
+    next(idx).then(() => {
+        this._iter(next, idx + 1, max, finish);
+      });
   }
 
-  async _download(parentPath, item) {
-    const { id, name, type } = item;
-    const safeName = this._replaceIncompatibleCharsForFiles(name);
-    const savePath = path.join(parentPath, safeName);
-    console.log('Downloading:', savePath);
+  download(savePath, folderId) {
+    return new Promise((resolve, _) => {
+      this._getItemList(folderId).then(items => {
+        this._doSerial(items, item => {
+          return this._download(savePath, item, 0);
+        }).then(() => {
+          console.log("Root resolve:", savePath);
+          resolve();
+        });
+      });
+    });
+  }
 
-    if (type == 'folder') {
-      if (fs.existsSync(savePath) === false) {
-        fs.mkdirSync(savePath);
-      }
-      const items = await this._getItemList(id);
-      await this._doPararell(items, item => {
-        if (item.type == 'folder') {
-          return null;
+  _download(parentPath, item) {
+    return new Promise((resolve, reject) => {
+      const { id, name, type } = item;
+      const safeName = this._replaceIncompatibleCharsForFiles(name);
+      const savePath = path.join(parentPath, safeName);
+
+      if (type == 'folder') {
+        if (fs.existsSync(savePath) == false) {
+          fs.mkdirSync(savePath);
+        }
+        this._downloadFolder(savePath, id)
+          .then(() => {
+            console.log('resolve:', savePath);
+            resolve();
+          });
+      } else if (type == 'file') {
+        if (path.extname(savePath) == '.boxnote') {
+          this._downloadFile(
+            savePath + '.txt',
+            item,
+            this._downloadBoxNote,
+          ).then(() => {
+            console.log('resolve:', savePath);
+            resolve();
+          });
         } else {
-          return this._download(savePath, item);
+          this._downloadFile(
+            savePath,
+            item,
+            this._downloadNormalFile,
+          ).then(() => {
+            console.log('resolve:', savePath);
+            resolve();
+          });
         }
-      });
-      await this._doSerial(items, item => {
-        if (item.type == 'folder') {
-          return this._download(savePath, item);
-        }
-      });
-      console.log(`Download completed: ${savePath}`);
-    } else if (type == 'file') {
-      if (path.extname(savePath) == '.boxnote') {
-        return this._downloadFile(
-          savePath + '.txt',
+      } else if (type == 'web_link') {
+        this._downloadFile(
+          savePath + '.url',
           item,
-          this._downloadBoxNote,
-        );
+          this._downloadWebLink,
+        ).then(() => {
+          console.log('resolve:', savePath);
+          resolve();
+        });
       } else {
-        return this._downloadFile(savePath, item, this._downloadNormalFile);
+        console.error(item);
+        reject('Error: Invalid item type');
       }
-    } else if (type == 'web_link') {
-      return this._downloadFile(savePath + '.url', item, this._downloadWebLink);
-    } else {
-      console.error('Invalid item type');
-      console.error(item);
-      process.exit(1);
-    }
+    });
+  }
+
+  _downloadFolder(savePath, id) {
+    return new Promise((resolve, _) => {
+      console.log('Downloading Folder:', savePath);
+      this._getItemList(id).then(items => {
+        const files = [];
+        const folders = [];
+        for (let item of items) {
+          if (item.type == 'folder') {
+            folders.push(item);
+          } else {
+            files.push(item);
+          }
+        }
+        this._doPararell(files, item => {
+          return this._download(savePath, item);
+        }).then(() => {
+          this._doSerial(folders, item => {
+            return this._download(savePath, item);
+          }).then(() => {
+            console.log(`Download completed: ${savePath}`);
+            resolve();
+          });
+        });
+      });
+    });
   }
 
   async _downloadFile(savePath, item, downloader) {
@@ -89,7 +150,9 @@ class Downloader {
     const modifiedAt = item.modified_at;
     if (lock != null) {
       if (this._UNLOCK_FILE === true) {
+        console.log('Unlocking:', savePath);
         await client.files.unlock(id);
+        console.log('Unlocked:', savePath);
       } else {
         console.log(`Skip Locked File: ${id}`);
         return;
@@ -97,18 +160,14 @@ class Downloader {
     }
     if (fs.existsSync(savePath) == false) {
       console.log(`File does not exists: ${savePath}`);
+      return downloader(savePath, item);
     } else if (await this._isFileOld(savePath, modifiedAt)) {
       console.log(`File is old: ${savePath}`);
+      return downloader(savePath, item);
     } else {
-      console.log(`Up To Date: ${savePath}`);
+      console.log('Up To Date:', savePath);
       return;
     }
-    while (this._downloadingNum >= this._MAX_CONCURRENT_DOWNLOAD) {
-      await this._sleep(500);
-    }
-    this._downloadingNum++;
-    await downloader(savePath, item);
-    this._downloadingNum--;
   }
 
   async _isFileOld(path, modifiedAt) {
@@ -118,32 +177,26 @@ class Downloader {
     return mod > dt;
   }
 
-  _sleep(msec) {
-    return new Promise(resolve => {
-      setTimeout(() => {
-        resolve();
-      }, msec);
-    });
-  }
-
   _downloadNormalFile(savePath, item) {
-    const { id } = item;
     return new Promise((resolve, reject) => {
+      const { id } = item;
+      console.log("Download Start:", savePath);
       client.files.getReadStream(id, null, function(error, stream) {
+        console.log("Stream Created:", savePath);
         if (error) {
+          console.log("Read Stream Error:", savePath);
+          console.log(error);
           reject(error);
           return;
         }
         const output = fs.createWriteStream(savePath);
         stream.pipe(output).on('error', () => {
-          console.error(`Stream Error: ${savePath}`);
+          console.log(`Stream Error: ${savePath}`);
           reject(error);
         });
-        stream.pipe(output).on('finish', () => {
-          console.log('Download Succeed:', savePath);
-          stream.destroy();
-          resolve();
-        });
+      }).then(() => {
+        console.log('Download Succeed:', savePath);
+        resolve();
       });
     });
   }
@@ -158,6 +211,7 @@ class Downloader {
   _downloadBoxNote(savePath, item) {
     const { id } = item;
     return new Promise((resolve, reject) => {
+      console.log("Download Start:", savePath);
       client.files.getReadStream(id, null, function(error, stream) {
         if (error) {
           reject(error);
@@ -174,10 +228,10 @@ class Downloader {
         stream.on('end', () => {
           const boxNoteData = JSON.parse(content);
           fs.writeFileSync(savePath, boxNoteData.atext.text);
-          console.log('Download Succeed:', savePath);
-          stream.destroy();
-          resolve();
         });
+      }).then(() => {
+        console.log('Download Succeed:', savePath);
+        resolve();
       });
     });
   }
@@ -187,7 +241,14 @@ class Downloader {
       fields: 'name,type,modified_at,size,url,lock',
       limit: 10000,
     });
-    return items;
+    const results = [];
+    console.log(`folderId: ${folderId}`);
+    for (let item of items.entries) {
+      const { id, name, type, modified_at, size, url, lock } = item;
+      console.log(`id: ${id}, type: ${type}, name: ${name}`);
+      results.push({ id, name, type, modified_at, size, url, lock });
+    }
+    return results;
   }
 
   _replaceIncompatibleCharsForFiles(folderName) {
@@ -199,7 +260,6 @@ function main() {
   const args = process.argv.slice(2);
   const targetItemId = args[0];
   const savePath = args[1];
-
   if (targetItemId == null || savePath == null) {
     console.error('Error');
     console.log('[Example] node scripts/download.js 2861786671 C:\\downloads');
@@ -207,7 +267,22 @@ function main() {
   }
   const downloadDir = path.resolve(savePath);
   const downloader = new Downloader();
-  downloader.download(downloadDir, targetItemId);
+  downloader.download(downloadDir, targetItemId)
+    .then(() => {
+      console.log(`All Files completed: ${targetItemId} ${savePath}`);
+    })
+    .catch(error => {
+      console.log("Error");
+      console.error(error);
+    });
 }
+
+process.on('uncaughtException', function(exception) {
+  console.log(exception);
+});
+
+process.on('unhandledRejection', (reason, p) => {
+  console.log('Unhandled Rejection at:', p, 'reason:', reason);
+});
 
 main();
