@@ -15,7 +15,7 @@ class Downloader {
     return new Promise((resolve, reject) => {
       this._iter(idx => {
           let prms = [];
-          let l = list.slice(idx * this._MAX_RECURSION_DEPTH, (1 + idx) * this._MAX_RECURSION_DEPTH - 1);
+          let l = list.slice(idx * this._MAX_CONCURRENT_DOWNLOAD, (1 + idx) * this._MAX_CONCURRENT_DOWNLOAD - 1);
           for (let item of l) {
             let p = f(item);
             if (p) {
