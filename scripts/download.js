@@ -25,7 +25,6 @@ class Downloader {
           return Promise.all(prms);
         }, 0, Math.floor(list.length / this._MAX_CONCURRENT_DOWNLOAD),
         () => {
-          console.log("_doPararell done");
           resolve();
         });
     });
@@ -37,7 +36,6 @@ class Downloader {
           return f(list[idx]);
         }, 0, list.length - 1,
         () => {
-          console.log("_doSerial done");
           resolve();
         }
       );
@@ -79,7 +77,6 @@ class Downloader {
         }
         this._downloadFolder(savePath, id)
           .then(() => {
-            console.log('resolve:', savePath);
             resolve();
           });
       } else if (type == 'file') {
@@ -89,7 +86,6 @@ class Downloader {
             item,
             this._downloadBoxNote,
           ).then(() => {
-            console.log('resolve:', savePath);
             resolve();
           });
         } else {
@@ -98,7 +94,6 @@ class Downloader {
             item,
             this._downloadNormalFile,
           ).then(() => {
-            console.log('resolve:', savePath);
             resolve();
           });
         }
@@ -108,7 +103,6 @@ class Downloader {
           item,
           this._downloadWebLink,
         ).then(() => {
-          console.log('resolve:', savePath);
           resolve();
         });
       } else {
