@@ -4,143 +4,60 @@ const { promisify } = require('util');
 const stat = promisify(fs.stat);
 const client = require('./init').client;
 
-class Downloader {
+function replaceIncompatibleCharsForFiles(folderName) {
+  return folderName.replace(/\\|\*|\/|\||<|>|:|\?|"\|\./g, '_');
+}
+
+class FolderDownloader {
+
   constructor() {
-    this._MAX_CONCURRENT_DOWNLOAD = 20;
-    this._client = require('./init').client;
     this._UNLOCK_FILE = true;
+    this._files = [];
+    this._folders = [];
   }
 
-  _doPararell(list, f) {
-    return new Promise((resolve, reject) => {
-      this._iter(idx => {
-          let prms = [];
-          let l = list.slice(idx * this._MAX_CONCURRENT_DOWNLOAD, (1 + idx) * this._MAX_CONCURRENT_DOWNLOAD - 1);
-          for (let item of l) {
-            let p = f(item);
-            if (p) {
-              prms.push(p);
-            }
-          }
-          return Promise.all(prms);
-        }, 0, Math.floor(list.length / this._MAX_CONCURRENT_DOWNLOAD),
-        () => {
-          resolve();
-        });
-    });
-  }
-
-  _doSerial(list, f) {
-    return new Promise((resolve, _) => {
-      this._iter(idx => {
-          return f(list[idx]);
-        }, 0, list.length - 1,
-        () => {
-          resolve();
-        }
-      );
-    });
-  }
-
-  _iter(next, idx, max, finish) {
-    if (idx > max) {
-       finish();
-       return;
-    }
-    next(idx).then(() => {
-        this._iter(next, idx + 1, max, finish);
-      });
-  }
-
-  download(savePath, folderId) {
-    return new Promise((resolve, _) => {
-      this._getItemList(folderId).then(items => {
-        this._doSerial(items, item => {
-          return this._download(savePath, item, 0);
-        }).then(() => {
-          console.log("Root resolve:", savePath);
-          resolve();
-        });
-      });
-    });
-  }
-
-  _download(parentPath, item) {
-    return new Promise((resolve, reject) => {
-      const { id, name, type } = item;
-      const safeName = this._replaceIncompatibleCharsForFiles(name);
-      const savePath = path.join(parentPath, safeName);
-
-      if (type == 'folder') {
-        if (fs.existsSync(savePath) == false) {
-          fs.mkdirSync(savePath);
-        }
-        this._downloadFolder(savePath, id)
-          .then(() => {
-            resolve();
-          });
-      } else if (type == 'file') {
-        if (path.extname(savePath) == '.boxnote') {
-          this._downloadFile(
-            savePath + '.txt',
-            item,
-            this._downloadBoxNote,
-          ).then(() => {
-            resolve();
-          });
-        } else {
-          this._downloadFile(
-            savePath,
-            item,
-            this._downloadNormalFile,
-          ).then(() => {
-            resolve();
-          });
-        }
-      } else if (type == 'web_link') {
-        this._downloadFile(
-          savePath + '.url',
-          item,
-          this._downloadWebLink,
-        ).then(() => {
-          resolve();
-        });
+  async prepare(id) {
+    const items = await this._getItemList(id);
+    for (let item of items) {
+      if (item.type == 'folder') {
+        this._folders.push(item);
       } else {
-        console.error(item);
-        reject('Error: Invalid item type');
+        this._files.push(item);
       }
-    });
+    }
   }
 
-  _downloadFolder(savePath, id) {
-    return new Promise((resolve, _) => {
-      console.log('Downloading Folder:', savePath);
-      this._getItemList(id).then(items => {
-        const files = [];
-        const folders = [];
-        for (let item of items) {
-          if (item.type == 'folder') {
-            folders.push(item);
-          } else {
-            files.push(item);
-          }
-        }
-        this._doPararell(files, item => {
-          return this._download(savePath, item);
-        }).then(() => {
-          this._doSerial(folders, item => {
-            return this._download(savePath, item);
-          }).then(() => {
-            console.log(`Download completed: ${savePath}`);
-            resolve();
-          });
-        });
-      });
-    });
+  files() {
+    return this._files;
+  }
+
+  folders() {
+    return this._folders;
+  }
+
+  async download(savePath, item) {
+    const { id, type } = item;
+    if (type == 'folder') {
+      if (fs.existsSync(savePath) == false) {
+        fs.mkdirSync(savePath);
+      }
+      await this._downloadFolder(savePath, id);
+    } else if (type == 'file') {
+      if (path.extname(savePath) == '.boxnote') {
+        await this._downloadFile(savePath + '.txt', item, this._downloadBoxNote);
+      } else {
+        await this._downloadFile(savePath, item, this._downloadNormalFile);
+      }
+    } else if (type == 'web_link') {
+      await this._downloadFile(savePath + '.url', item, this._downloadWebLink);
+    } else {
+      console.error(item);
+      throw new Error("Error: Invalid item type");
+    }
   }
 
   async _downloadFile(savePath, item, downloader) {
-    const { id, lock } = item;
+    const { id, lock, size } = item;
     const modifiedAt = item.modified_at;
     if (lock != null) {
       if (this._UNLOCK_FILE === true) {
@@ -154,45 +71,42 @@ class Downloader {
     }
     if (fs.existsSync(savePath) == false) {
       console.log(`File does not exists: ${savePath}`);
-      return downloader(savePath, item);
-    } else if (await this._isFileOld(savePath, modifiedAt)) {
+      await downloader(savePath, item);
+    } else if (await this._isFileOld(savePath, modifiedAt, size)) {
       console.log(`File is old: ${savePath}`);
-      return downloader(savePath, item);
+      await downloader(savePath, item);
     } else {
       console.log('Up To Date:', savePath);
       return;
     }
   }
 
-  async _isFileOld(path, modifiedAt) {
+  async _isFileOld(path, modifiedAt, size) {
     const stats = await stat(path);
     const dt = new Date(stats.mtime);
     const mod = new Date(modifiedAt);
-    return mod > dt;
+    if (path.includes(".boxnote")) {
+      return mod > dt;
+    }
+    return (mod > dt) || (stats.size != size);
   }
 
-  _downloadNormalFile(savePath, item) {
-    return new Promise((resolve, reject) => {
-      const { id } = item;
-      console.log("Download Start:", savePath);
-      client.files.getReadStream(id, null, function(error, stream) {
-        console.log("Stream Created:", savePath);
+  async _downloadNormalFile(savePath, item) {
+    const { id } = item;
+    console.log('Download Start:', savePath);
+    await client.files
+      .getReadStream(id, null, function(error, stream) {
         if (error) {
-          console.log("Read Stream Error:", savePath);
           console.log(error);
-          reject(error);
-          return;
+          throw new Error(error);
         }
         const output = fs.createWriteStream(savePath);
         stream.pipe(output).on('error', () => {
-          console.log(`Stream Error: ${savePath}`);
-          reject(error);
+          const err = `Stream Error: ${savePath}`;
+          throw new Error(err);
         });
-      }).then(() => {
-        console.log('Download Succeed:', savePath);
-        resolve();
       });
-    });
+    console.log('Download Succeed:', savePath);
   }
 
   _downloadWebLink(savePath, item) {
@@ -202,52 +116,131 @@ class Downloader {
     console.log('Download Succeed:', savePath);
   }
 
-  _downloadBoxNote(savePath, item) {
+  async _downloadBoxNote(savePath, item) {
     const { id } = item;
-    return new Promise((resolve, reject) => {
-      console.log("Download Start:", savePath);
-      client.files.getReadStream(id, null, function(error, stream) {
+    console.log('Download Start:', savePath);
+    await client.files
+      .getReadStream(id, null, function(error, stream) {
         if (error) {
           reject(error);
           return;
         }
         let content = '';
-        stream.on('error', error => {
+        stream.on('error', (error) => {
           console.error(`Stream Error: ${savePath}`);
           reject(error);
         });
-        stream.on('data', buffer => {
+        stream.on('data', (buffer) => {
           content += buffer;
         });
         stream.on('end', () => {
           const boxNoteData = JSON.parse(content);
           fs.writeFileSync(savePath, boxNoteData.atext.text);
         });
-      }).then(() => {
-        console.log('Download Succeed:', savePath);
-        resolve();
       });
-    });
+    console.log('Download Succeed:', savePath);
   }
 
   async _getItemList(folderId) {
-    const items = await this._client.folders.getItems(folderId, {
+    const items = await client.folders.getItems(folderId, {
       fields: 'name,type,modified_at,size,url,lock',
       limit: 10000,
     });
     const results = [];
-    console.log(`folderId: ${folderId}`);
     for (let item of items.entries) {
       const { id, name, type, modified_at, size, url, lock } = item;
-      console.log(`id: ${id}, type: ${type}, name: ${name}`);
       results.push({ id, name, type, modified_at, size, url, lock });
     }
     return results;
   }
 
-  _replaceIncompatibleCharsForFiles(folderName) {
-    return folderName.replace(/\\|\*|\/|\||<|>|:|\?|"\|\./g, '_');
+}
+
+class Downloader {
+
+  constructor() {
+    this._MAX_CONCURRENT_DOWNLOAD = 10;
   }
+
+  _doPararell(list, f) {
+    return new Promise((resolve) => {
+      this._iter(
+        (idx) => {
+          let prms = [];
+          let l = list.slice(
+            idx * this._MAX_CONCURRENT_DOWNLOAD,
+            (1 + idx) * this._MAX_CONCURRENT_DOWNLOAD,
+          );
+          for (let item of l) {
+            let p = f(item);
+            if (p) {
+              prms.push(p);
+            }
+          }
+          return Promise.all(prms);
+        },
+        0,
+        Math.floor(list.length / this._MAX_CONCURRENT_DOWNLOAD),
+        () => {
+          resolve();
+        },
+      );
+    });
+  }
+
+  async _doSerial(list, f) {
+    for (let item of list) {
+      await f(item);
+    }
+  }
+
+  async _iter(next, idx, max, finish) {
+    if (idx > max) {
+      finish();
+      return;
+    }
+    await next(idx);
+    this._iter(next, idx + 1, max, finish);
+  }
+
+  async download(savePath, folderId) {
+    const children = await this._downloadFolder(savePath, folderId);
+    await this._consumeChildren(children);
+  }
+
+  async _consumeChildren(children) {
+    while (children.length > 0) {
+      const {childPath, childItem} = children.shift();
+      const list = await this._downloadFolder(childPath, childItem.id);
+      for (let el of list) {
+        children.push(el);
+      }
+    }
+  }
+
+  async _downloadFolder(savePath, id) {
+    const fd = new FolderDownloader();
+    await fd.prepare(id);
+
+    await this._doPararell(fd.files(), async (item) => {
+      const { name } = item;
+      const safeName = replaceIncompatibleCharsForFiles(name);
+      await fd.download(path.join(savePath, safeName), item);
+    });
+
+    const children = [];
+    for (let childItem of fd.folders()) {
+      const { name } = childItem;
+      const safeName = replaceIncompatibleCharsForFiles(name);
+      const childPath = path.join(savePath, safeName);
+      if (fs.existsSync(childPath) == false) {
+        fs.mkdirSync(childPath);
+      }
+      children.push({childPath, childItem});
+    }
+    return children;
+  }
+
 }
 
 function main() {
@@ -261,12 +254,14 @@ function main() {
   }
   const downloadDir = path.resolve(savePath);
   const downloader = new Downloader();
-  downloader.download(downloadDir, targetItemId)
+  downloader
+    .download(downloadDir, targetItemId)
     .then(() => {
       console.log(`All Files completed: ${targetItemId} ${savePath}`);
+      process.exit(0);
     })
-    .catch(error => {
-      console.log("Error");
+    .catch((error) => {
+      console.log('Error');
       console.error(error);
     });
 }
