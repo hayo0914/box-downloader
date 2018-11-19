@@ -5,7 +5,8 @@ const stat = promisify(fs.stat);
 const client = require('./init').client;
 
 function replaceIncompatibleCharsForFiles(folderName) {
-  return folderName.replace(/\\|\*|\/|\||<|>|:|\?|"\|\./g, '_');
+  let s = folderName.replace(/\\|\*|\/|\||<|>|:|\?|"\|\./g, '_');
+  return s.substr(0, 70);
 }
 
 class FolderDownloader {
