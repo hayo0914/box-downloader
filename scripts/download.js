@@ -159,25 +159,33 @@ class FolderDownloader {
 class Downloader {
 
   constructor() {
-    this._MAX_CONCURRENT_DOWNLOAD = 10;
+    this._MAX_CONCURRENT_DOWNLOAD = 5;
   }
 
   _doPararell(list, f) {
     return new Promise((resolve) => {
       this._iter(
-        (idx) => {
+        async (idx) => {
           let prms = [];
           let l = list.slice(
             idx * this._MAX_CONCURRENT_DOWNLOAD,
             (1 + idx) * this._MAX_CONCURRENT_DOWNLOAD,
           );
+          if (l.length > 0) {
+            console.log("Pararell Task: ");
+          }
+          let i = idx;
           for (let item of l) {
             let p = f(item);
+            i++;
             if (p) {
+              console.log(i + "/" + list.length, ":", item.name);
               prms.push(p);
             }
           }
-          return Promise.all(prms);
+          if (prms.length > 0) {
+            await Promise.all(prms);
+          }
         },
         0,
         Math.floor(list.length / this._MAX_CONCURRENT_DOWNLOAD),
@@ -225,7 +233,7 @@ class Downloader {
     await this._doPararell(fd.files(), async (item) => {
       const { name, type } = item;
       let safeName = replaceIncompatibleCharsForFiles(name);
-      if (type == 'web_link') {               
+      if (type == 'web_link') {
         safeName = safeName.substr(0, 70);
       }
       await fd.download(path.join(savePath, safeName), item);
