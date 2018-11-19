@@ -174,7 +174,7 @@ class Downloader {
           if (l.length > 0) {
             console.log("Pararell Task: ");
           }
-          let i = idx;
+          let i = idx * this._MAX_CONCURRENT_DOWNLOAD;
           for (let item of l) {
             let p = f(item);
             i++;
