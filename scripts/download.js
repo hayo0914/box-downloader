@@ -5,8 +5,7 @@ const stat = promisify(fs.stat);
 const client = require('./init').client;
 
 function replaceIncompatibleCharsForFiles(folderName) {
-  let s = folderName.replace(/\\|\*|\/|\||<|>|:|\?|"\|\./g, '_');
-  return s.substr(0, 70);
+  return folderName.replace(/\\|\*|\/|\||<|>|:|\?|"\|\./g, '_');
 }
 
 class FolderDownloader {
@@ -224,8 +223,11 @@ class Downloader {
     await fd.prepare(id);
 
     await this._doPararell(fd.files(), async (item) => {
-      const { name } = item;
-      const safeName = replaceIncompatibleCharsForFiles(name);
+      const { name, type } = item;
+      let safeName = replaceIncompatibleCharsForFiles(name);
+      if (type == 'web_link') {               
+        safeName = safeName.substr(0, 70);
+      }
       await fd.download(path.join(savePath, safeName), item);
     });
 
